@@ -28,33 +28,31 @@ if file_ternium and file_odoo:
             st.stop()
 
         # 2. CARGAR ODOO
-        # Leemos todo como string primero para proteger los datos
         if file_odoo.name.endswith('.csv'):
             df_odoo = pd.read_csv(file_odoo, dtype=str) 
         else:
             df_odoo = pd.read_excel(file_odoo, dtype=str)
 
-        # Definición de columnas
         col_ref_interna = 'Referencia interna'
-        col_id_externo = 'ID externo' # Esta es la columna mágica
+        col_id_externo = 'ID externo'
         col_ternium_en_odoo = 'x_ternium_id'
         col_peso = 'Peso' 
 
-        # Validaciones básicas
+        # Validaciones
         errores = []
         if col_ternium_en_odoo not in df_odoo.columns: errores.append(f"Falta '{col_ternium_en_odoo}' en Odoo.")
         if col_peso not in df_odoo.columns: errores.append(f"Falta '{col_peso}' en Odoo.")
         
-        # Lógica inteligente para elegir qué ID usar
+        # Selección de ID
         usar_id_externo = False
-        col_id_usada = '' # Aquí guardaremos cuál vamos a usar
+        col_id_usada = ''
 
         if col_id_externo in df_odoo.columns:
             usar_id_externo = True
             col_id_usada = col_id_externo
         elif col_ref_interna in df_odoo.columns:
             col_id_usada = col_ref_interna
-            st.warning("⚠️ No encontré 'ID externo'. Usaré 'Referencia interna'. Cuidado con los productos que pierden los ceros.")
+            st.warning("⚠️ No encontré 'ID externo'. Usaré 'Referencia interna'.")
         else:
             errores.append("Falta 'ID externo' (o Referencia interna) en el archivo de Odoo.")
 
@@ -65,15 +63,12 @@ if file_ternium and file_odoo:
         # 3. LIMPIEZA
         df_odoo_clean = df_odoo.dropna(subset=[col_ternium_en_odoo]).copy()
         
-        # Limpieza de IDs Ternium y Referencias
+        # Normalización de IDs
         df_odoo_clean[col_ternium_en_odoo] = df_odoo_clean[col_ternium_en_odoo].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-        # Limpiamos también la columna ID que vayamos a usar
         df_odoo_clean[col_id_usada] = df_odoo_clean[col_id_usada].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-        
-        # Ternium
         df_ternium[col_clave_ternium] = df_ternium[col_clave_ternium].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
         
-        # Rellenar ceros ID Ternium (para asegurar el match)
+        # Relleno de ceros
         df_odoo_clean[col_ternium_en_odoo] = df_odoo_clean[col_ternium_en_odoo].apply(lambda x: x.zfill(10))
         df_ternium[col_clave_ternium] = df_ternium[col_clave_ternium].apply(lambda x: x.zfill(10))
 
@@ -90,34 +85,61 @@ if file_ternium and file_odoo:
             st.warning("⚠️ No se encontraron coincidencias. Verificá los IDs.")
             st.stop()
 
-        # 5. CÁLCULOS
+        # 5. CÁLCULOS (MODIFICADO: Lógica de Flete + 65.45)
         def clean_money(x):
             if isinstance(x, str):
                 return float(x.replace('$', '').replace(',', ''))
             return float(x) if pd.notnull(x) else 0.0
 
-        precio_col = 'Precio con envío USD'
-        if precio_col not in df_merged.columns:
-            st.error(f"No encuentro la columna '{precio_col}' en Ternium.")
+        col_precio_envio = 'Precio con envío USD'
+        
+        # Buscamos la columna de bonificación (a veces cambia el nombre, buscamos "bonifi")
+        col_precio_bonif = next((c for c in df_merged.columns if 'bonifi' in c.lower() and 'precio' in c.lower()), 'Precio con bonificación USD')
+
+        if col_precio_envio not in df_merged.columns:
+            st.error(f"No encuentro la columna '{col_precio_envio}' en Ternium.")
             st.stop()
 
-        df_merged[precio_col] = df_merged[precio_col].apply(clean_money)
+        # Limpiamos columna envío
+        df_merged[col_precio_envio] = df_merged[col_precio_envio].apply(clean_money)
+        
+        # Lógica del precio base: Usar envío, si no existe -> (Bonificado + 65.45)
+        if col_precio_bonif in df_merged.columns:
+            df_merged[col_precio_bonif] = df_merged[col_precio_bonif].apply(clean_money)
+            
+            def calcular_base(row):
+                p_envio = row[col_precio_envio]
+                p_bonif = row[col_precio_bonif]
+                
+                # Si tiene precio con envío, usamos ese
+                if p_envio > 1.0:
+                    return p_envio
+                # Si no, y tiene precio bonificado, sumamos 65.45
+                elif p_bonif > 1.0:
+                    return p_bonif + 65.45
+                else:
+                    return 0.0
+            
+            df_merged['Precio Base Tonelada'] = df_merged.apply(calcular_base, axis=1)
+        else:
+            # Si no existe la columna bonificación, usamos solo la de envío
+            df_merged['Precio Base Tonelada'] = df_merged[col_precio_envio]
+
+        # Peso
         df_merged[col_peso] = pd.to_numeric(df_merged[col_peso], errors='coerce').fillna(0)
 
-        # Fórmula
-        df_merged['Nuevo Costo'] = (df_merged[precio_col] / 1000) * df_merged[col_peso]
+        # Fórmula Final: (Precio Base / 1000) * Peso
+        df_merged['Nuevo Costo'] = (df_merged['Precio Base Tonelada'] / 1000) * df_merged[col_peso]
         df_merged['Nuevo Costo'] = df_merged['Nuevo Costo'].fillna(0)
 
         # 6. SEPARACIÓN
-        # Grupo A: Listos para importar
         df_importar = df_merged[df_merged['Nuevo Costo'] > 0.01].copy()
-        # Grupo B: Errores (Precio 0)
         df_revision = df_merged[df_merged['Nuevo Costo'] <= 0.01].copy()
 
-        # Agregamos columna de diagnóstico al de revisión
+        # Diagnóstico de errores
         def diagnostico(row):
             if row[col_peso] == 0: return "Falta PESO en Odoo"
-            if row[precio_col] == 0: return "Precio 0 en Ternium"
+            if row['Precio Base Tonelada'] == 0: return "Sin Precio en Ternium"
             return "Error desconocido"
             
         if not df_revision.empty:
@@ -131,26 +153,21 @@ if file_ternium and file_odoo:
         with col1:
             st.metric("Listos para Importar", len(df_importar))
             if not df_importar.empty:
-                # Mostramos ID, ID Ternium, Nombre y Costo en la previsualización
+                # Mostramos ID, Ternium ID, Nombre y Costo
                 st.dataframe(df_importar[[col_id_usada, col_ternium_en_odoo, 'Nombre', 'Nuevo Costo']].head())
                 
-                # Generar CSV Limpio para Odoo
                 df_export = pd.DataFrame()
                 
-                # 1. ID de Odoo (Externo o Referencia)
                 if usar_id_externo:
                     df_export['id'] = df_importar[col_id_usada]
                 else:
                     df_export['default_code'] = df_importar[col_id_usada]
                 
-                # 2. ID de Ternium (¡AGREGADO!)
                 df_export['x_ternium_id'] = df_importar[col_ternium_en_odoo]
 
-                # 3. Nombre (Opcional)
                 if 'Nombre' in df_importar.columns:
                     df_export['name'] = df_importar['Nombre']
                     
-                # 4. Precio Nuevo
                 df_export['standard_price'] = df_importar['Nuevo Costo'].round(2)
 
                 csv = df_export.to_csv(index=False).encode('utf-8')
@@ -165,13 +182,12 @@ if file_ternium and file_odoo:
         with col2:
             st.metric("Errores / Precio 0", len(df_revision))
             if not df_revision.empty:
-                # Mostramos ID Ternium también en errores
                 st.dataframe(df_revision[[col_id_usada, col_ternium_en_odoo, 'Nombre', 'Motivo Error']].head())
                 
-                # Generar Excel para revisar (incluyendo ID Ternium)
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_revision[[col_id_usada, col_ternium_en_odoo, 'Nombre', col_peso, precio_col, 'Nuevo Costo', 'Motivo Error']].to_excel(writer, index=False)
+                    # Incluimos precio base y peso para que entiendas el error
+                    df_revision[[col_id_usada, col_ternium_en_odoo, 'Nombre', col_peso, 'Precio Base Tonelada', 'Nuevo Costo', 'Motivo Error']].to_excel(writer, index=False)
                 
                 st.download_button(
                     label="⚠️ 2. Descargar Reporte de Errores",
