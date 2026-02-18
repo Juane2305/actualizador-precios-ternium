@@ -52,7 +52,6 @@ if file_ternium and file_odoo:
         if col_id_externo in df_odoo.columns:
             usar_id_externo = True
             col_id_usada = col_id_externo
-            # st.success("✅ Se detectó 'ID externo'. Usando modo seguro anti-duplicados.")
         elif col_ref_interna in df_odoo.columns:
             col_id_usada = col_ref_interna
             st.warning("⚠️ No encontré 'ID externo'. Usaré 'Referencia interna'. Cuidado con los productos que pierden los ceros.")
@@ -132,8 +131,8 @@ if file_ternium and file_odoo:
         with col1:
             st.metric("Listos para Importar", len(df_importar))
             if not df_importar.empty:
-                # Mostramos ID, Nombre y Costo
-                st.dataframe(df_importar[[col_id_usada, 'Nombre', 'Nuevo Costo']].head())
+                # --- AQUÍ ESTÁ EL CAMBIO: Agregué col_ternium_en_odoo a la lista ---
+                st.dataframe(df_importar[[col_id_usada, col_ternium_en_odoo, 'Nombre', 'Nuevo Costo']].head())
                 
                 # Generar CSV Limpio para Odoo
                 df_export = pd.DataFrame()
@@ -162,12 +161,13 @@ if file_ternium and file_odoo:
         with col2:
             st.metric("Errores / Precio 0", len(df_revision))
             if not df_revision.empty:
-                st.dataframe(df_revision[[col_id_usada, 'Nombre', 'Motivo Error']].head())
+                # También lo agregué aquí para ver cuál es el ID Ternium que falló
+                st.dataframe(df_revision[[col_id_usada, col_ternium_en_odoo, 'Nombre', 'Motivo Error']].head())
                 
                 # Generar Excel para revisar
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_revision[[col_id_usada, 'Nombre', col_peso, precio_col, 'Nuevo Costo', 'Motivo Error']].to_excel(writer, index=False)
+                    df_revision[[col_id_usada, col_ternium_en_odoo, 'Nombre', col_peso, precio_col, 'Nuevo Costo', 'Motivo Error']].to_excel(writer, index=False)
                 
                 st.download_button(
                     label="⚠️ 2. Descargar Reporte de Errores",
