@@ -85,15 +85,13 @@ if file_ternium and file_odoo:
             st.warning("⚠️ No se encontraron coincidencias. Verificá los IDs.")
             st.stop()
 
-        # 5. CÁLCULOS (MODIFICADO: Lógica de Flete + 65.45)
+        # 5. CÁLCULOS
         def clean_money(x):
             if isinstance(x, str):
                 return float(x.replace('$', '').replace(',', ''))
             return float(x) if pd.notnull(x) else 0.0
 
         col_precio_envio = 'Precio con envío USD'
-        
-        # Buscamos la columna de bonificación (a veces cambia el nombre, buscamos "bonifi")
         col_precio_bonif = next((c for c in df_merged.columns if 'bonifi' in c.lower() and 'precio' in c.lower()), 'Precio con bonificación USD')
 
         if col_precio_envio not in df_merged.columns:
@@ -103,32 +101,25 @@ if file_ternium and file_odoo:
         # Limpiamos columna envío
         df_merged[col_precio_envio] = df_merged[col_precio_envio].apply(clean_money)
         
-        # Lógica del precio base: Usar envío, si no existe -> (Bonificado + 65.45)
+        # Lógica del precio base
         if col_precio_bonif in df_merged.columns:
             df_merged[col_precio_bonif] = df_merged[col_precio_bonif].apply(clean_money)
             
             def calcular_base(row):
                 p_envio = row[col_precio_envio]
                 p_bonif = row[col_precio_bonif]
-                
-                # Si tiene precio con envío, usamos ese
-                if p_envio > 1.0:
-                    return p_envio
-                # Si no, y tiene precio bonificado, sumamos 65.45
-                elif p_bonif > 1.0:
-                    return p_bonif + 65.45
-                else:
-                    return 0.0
+                if p_envio > 1.0: return p_envio
+                elif p_bonif > 1.0: return p_bonif + 65.45
+                else: return 0.0
             
             df_merged['Precio Base Tonelada'] = df_merged.apply(calcular_base, axis=1)
         else:
-            # Si no existe la columna bonificación, usamos solo la de envío
             df_merged['Precio Base Tonelada'] = df_merged[col_precio_envio]
 
         # Peso
         df_merged[col_peso] = pd.to_numeric(df_merged[col_peso], errors='coerce').fillna(0)
 
-        # Fórmula Final: (Precio Base / 1000) * Peso
+        # Fórmula Final
         df_merged['Nuevo Costo'] = (df_merged['Precio Base Tonelada'] / 1000) * df_merged[col_peso]
         df_merged['Nuevo Costo'] = df_merged['Nuevo Costo'].fillna(0)
 
@@ -153,7 +144,6 @@ if file_ternium and file_odoo:
         with col1:
             st.metric("Listos para Importar", len(df_importar))
             if not df_importar.empty:
-                # Mostramos ID, Ternium ID, Nombre y Costo
                 st.dataframe(df_importar[[col_id_usada, col_ternium_en_odoo, 'Nombre', 'Nuevo Costo']].head())
                 
                 df_export = pd.DataFrame()
@@ -163,20 +153,25 @@ if file_ternium and file_odoo:
                 else:
                     df_export['default_code'] = df_importar[col_id_usada]
                 
-                df_export['x_ternium_id'] = df_importar[col_ternium_en_odoo]
+                # Nos aseguramos que x_ternium_id sea texto
+                df_export['x_ternium_id'] = df_importar[col_ternium_en_odoo].astype(str)
 
                 if 'Nombre' in df_importar.columns:
                     df_export['name'] = df_importar['Nombre']
                     
                 df_export['standard_price'] = df_importar['Nuevo Costo'].round(2)
 
-                csv = df_export.to_csv(index=False).encode('utf-8')
+                # --- CAMBIO IMPORTANTE: EXPORTAR A EXCEL (.xlsx) ---
+                output_odoo = io.BytesIO()
+                with pd.ExcelWriter(output_odoo, engine='openpyxl') as writer:
+                    df_export.to_excel(writer, index=False)
+                
                 st.download_button(
-                    label="💾 1. Descargar CSV para Odoo",
-                    data=csv,
-                    file_name='actualizacion_precios_ternium.csv',
-                    mime='text/csv',
-                    key='btn_csv'
+                    label="💾 1. Descargar Excel para Odoo",
+                    data=output_odoo.getvalue(),
+                    file_name='actualizacion_precios_ternium.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    key='btn_odoo'
                 )
 
         with col2:
@@ -186,7 +181,6 @@ if file_ternium and file_odoo:
                 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    # Incluimos precio base y peso para que entiendas el error
                     df_revision[[col_id_usada, col_ternium_en_odoo, 'Nombre', col_peso, 'Precio Base Tonelada', 'Nuevo Costo', 'Motivo Error']].to_excel(writer, index=False)
                 
                 st.download_button(
