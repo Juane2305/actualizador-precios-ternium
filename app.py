@@ -131,22 +131,26 @@ if file_ternium and file_odoo:
         with col1:
             st.metric("Listos para Importar", len(df_importar))
             if not df_importar.empty:
-                # --- AQUÍ ESTÁ EL CAMBIO: Agregué col_ternium_en_odoo a la lista ---
+                # Mostramos ID, ID Ternium, Nombre y Costo en la previsualización
                 st.dataframe(df_importar[[col_id_usada, col_ternium_en_odoo, 'Nombre', 'Nuevo Costo']].head())
                 
                 # Generar CSV Limpio para Odoo
                 df_export = pd.DataFrame()
                 
-                # LA GRAN DIFERENCIA: Usamos 'id' si es externo, 'default_code' si es referencia
+                # 1. ID de Odoo (Externo o Referencia)
                 if usar_id_externo:
                     df_export['id'] = df_importar[col_id_usada]
                 else:
                     df_export['default_code'] = df_importar[col_id_usada]
                 
-                # Opcional: Agregar nombre si existe
+                # 2. ID de Ternium (¡AGREGADO!)
+                df_export['x_ternium_id'] = df_importar[col_ternium_en_odoo]
+
+                # 3. Nombre (Opcional)
                 if 'Nombre' in df_importar.columns:
                     df_export['name'] = df_importar['Nombre']
                     
+                # 4. Precio Nuevo
                 df_export['standard_price'] = df_importar['Nuevo Costo'].round(2)
 
                 csv = df_export.to_csv(index=False).encode('utf-8')
@@ -161,10 +165,10 @@ if file_ternium and file_odoo:
         with col2:
             st.metric("Errores / Precio 0", len(df_revision))
             if not df_revision.empty:
-                # También lo agregué aquí para ver cuál es el ID Ternium que falló
+                # Mostramos ID Ternium también en errores
                 st.dataframe(df_revision[[col_id_usada, col_ternium_en_odoo, 'Nombre', 'Motivo Error']].head())
                 
-                # Generar Excel para revisar
+                # Generar Excel para revisar (incluyendo ID Ternium)
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_revision[[col_id_usada, col_ternium_en_odoo, 'Nombre', col_peso, precio_col, 'Nuevo Costo', 'Motivo Error']].to_excel(writer, index=False)
