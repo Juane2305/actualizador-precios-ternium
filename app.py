@@ -8,7 +8,23 @@ st.title("🏭 Actualizador de Precios: Ternium a Odoo")
 
 # --- BARRA LATERAL ---
 with st.sidebar:
-    st.header("1. Subir Archivos")
+    st.header("1. Configuración")
+    
+    # --- NUEVA LÓGICA: Selector de Tipo de Material ---
+    tipo_material = st.radio(
+        "¿Qué tipo de material vas a procesar?",
+        options=["TUBOS (Bonif + $65.45)", "PERFILES (Bonif + $61.20)"]
+    )
+    
+    # Asignamos el valor del flete dinámicamente según la elección
+    if "TUBOS" in tipo_material:
+        flete_adicional = 65.45
+    else:
+        flete_adicional = 61.20
+
+    st.divider()
+
+    st.header("2. Subir Archivos")
     st.info("Tip: Si tu archivo de Odoo tiene la columna 'ID externo', el sistema la usará para evitar duplicados.")
     file_odoo = st.file_uploader("📂 Archivo de Odoo (CSV/Excel)", type=['csv', 'xlsx'])
     file_ternium = st.file_uploader("📂 Catálogo Ternium (CSV/Excel)", type=['csv', 'xlsx'])
@@ -109,7 +125,8 @@ if file_ternium and file_odoo:
                 p_envio = row[col_precio_envio]
                 p_bonif = row[col_precio_bonif]
                 if p_envio > 1.0: return p_envio
-                elif p_bonif > 1.0: return p_bonif + 65.45
+                # USAMOS LA VARIABLE DINÁMICA ACÁ
+                elif p_bonif > 1.0: return p_bonif + flete_adicional
                 else: return 0.0
             
             df_merged['Precio Base Tonelada'] = df_merged.apply(calcular_base, axis=1)
@@ -137,7 +154,7 @@ if file_ternium and file_odoo:
             df_revision['Motivo Error'] = df_revision.apply(diagnostico, axis=1)
 
         # 7. RESULTADOS Y DESCARGAS
-        st.success(f"✅ Proceso terminado. Se usarán {len(df_importar)} productos.")
+        st.success(f"✅ Proceso terminado ({tipo_material.split(' ')[0]}). Se usarán {len(df_importar)} productos.")
         
         col1, col2 = st.columns(2)
         
@@ -153,7 +170,7 @@ if file_ternium and file_odoo:
                 else:
                     df_export['default_code'] = df_importar[col_id_usada]
                 
-                # Nos aseguramos que x_ternium_id sea texto
+                # Forzamos estricamente a texto para que no borre los ceros
                 df_export['x_ternium_id'] = df_importar[col_ternium_en_odoo].astype(str)
 
                 if 'Nombre' in df_importar.columns:
@@ -161,15 +178,16 @@ if file_ternium and file_odoo:
                     
                 df_export['standard_price'] = df_importar['Nuevo Costo'].round(2)
 
-                # --- CAMBIO IMPORTANTE: EXPORTAR A EXCEL (.xlsx) ---
+                # Exportar a Excel protegiendo los textos
                 output_odoo = io.BytesIO()
+                # Usamos engine_kwargs para asegurar que respete los formatos string (opcional pero seguro)
                 with pd.ExcelWriter(output_odoo, engine='openpyxl') as writer:
                     df_export.to_excel(writer, index=False)
                 
                 st.download_button(
                     label="💾 1. Descargar Excel para Odoo",
                     data=output_odoo.getvalue(),
-                    file_name='actualizacion_precios_ternium.xlsx',
+                    file_name=f'actualizacion_precios_{tipo_material.split(" ")[0].lower()}.xlsx',
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     key='btn_odoo'
                 )
@@ -186,7 +204,7 @@ if file_ternium and file_odoo:
                 st.download_button(
                     label="⚠️ 2. Descargar Reporte de Errores",
                     data=output.getvalue(),
-                    file_name='productos_con_error.xlsx',
+                    file_name=f'errores_{tipo_material.split(" ")[0].lower()}.xlsx',
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     key='btn_error'
                 )
@@ -194,4 +212,4 @@ if file_ternium and file_odoo:
     except Exception as e:
         st.error(f"Error: {e}")
 else:
-    st.info("👈 Subí los archivos para empezar.")
+    st.info("👈 Elegí el material y subí los archivos para empezar.")
